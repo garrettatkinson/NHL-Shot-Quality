@@ -1,0 +1,383 @@
+---
+title: "NHL_Shot_Analysis_Visualization"
+author: "Daniel, Garrett, Ian"
+date: "`r Sys.Date()`"
+output: html_document
+---
+
+# NHL Shot Analysis Visualization 
+### Load library
+```{r}
+library(ggpubr)
+library(tidyverse)
+library(forcats)
+library(jpeg)
+library(grid)
+library(gganimate)
+library(visdat)
+library(eeptools)
+library(glmnet) # Load glmnet
+library(plotmo) # for plot_glmnet
+library(rpart)                      # Popular decision tree algorithm
+library(rattle)                 # Fancy tree plot
+library(rpart.plot)             # Enhanced tree plots
+library(RColorBrewer)               # Color selection for fancy tree plot
+library(party)                  # Alternative decision tree algorithm
+library(partykit)               # Convert rpart object to BinaryTree
+library(caret)  
+library(randomForest)
+library(sparcl) # Sparse Clustering
+library(cluster) # Load cluster
+library(factoextra) # clustering algorithms & visualization
+library(xgboost)
+library(xgboostExplainer) # Load XGboost Explainer
+library(pROC) # Load proc
+```
+
+## Original Data & Cleaning
+Data Cleaning has been done in the Daniel Analysis.Rmd. Referring to Daniel Analysis.Rmd for details of cleaning.
+
+
+### Load Clean Data
+```{r}
+NHL_Shot_Analysis_Data <- read_csv("NHL_Shot_Analysis_Data.csv", col_select = -1)
+```
+Data preview
+```{r}
+# How many rows and columns?
+dim(NHL_Shot_Analysis_Data)
+# What are the data types and what do they look like in general
+summary(NHL_Shot_Analysis_Data)
+# The names of all columns of the data
+names(NHL_Shot_Analysis_Data)
+# First 6 rows of the data
+head(NHL_Shot_Analysis_Data)
+# Last 6 rows of the data
+tail(NHL_Shot_Analysis_Data)
+# How many NAs are there?
+sum(is.na(NHL_Shot_Analysis_Data))
+
+```
+
+NAs handling
+```{r}
+# Check the NAs in data set
+sum(is.na(NHL_Shot_Analysis_Data))
+
+# Remove all NAs in the data set
+NHL_Shot_Analysis_Data <- na.omit(NHL_Shot_Analysis_Data)
+```
+
+
+## Data Visualization
+Focus on the secondaryType of "shot" & "goal" in the event column. Calculate the frequency of each types of shots and their conversion rate.
+
+```{r}
+# Examine different types of shots
+summary(as.factor(NHL_Shot_Analysis_Data$secondaryType))
+
+# Create a table to summarize the frequency of different types of shots
+shots.count.df <- NHL_Shot_Analysis_Data  %>%
+  group_by(secondaryType) %>%
+  summarise(count = n()) %>%
+  arrange(desc(count))
+
+print(shots.count.df)
+
+# Visualization of the frequency of different types of shots
+options(scipen = 1) # No scientific notation
+
+g1 <- count(NHL_Shot_Analysis_Data, secondaryType) %>%
+  ggplot(aes(x = reorder(secondaryType, -n), y = n))+
+  geom_col(aes(fill = as.factor(secondaryType))) +
+  geom_label(aes(label = n), label.size = 0.1, vjust = -0.3)+
+  scale_y_continuous(name = "Frequency", limits = c(0, 550000), breaks = c(0, 100000,200000,300000,400000,500000))+
+  scale_x_discrete(name = "Types of Shot") +
+  ggtitle(paste("Frequency of Types of Shot n =", sum(shots.count.df$count),sep = " "))
+
+# Conversion Rate of Different Types of Shot
+Shot.df <- NHL_Shot_Analysis_Data %>%
+  filter(event == "Shot" & is.na(secondaryType) == F) %>%
+  group_by(secondaryType) %>%
+  summarise(count=n())
+
+Goal.df <- NHL_Shot_Analysis_Data %>%
+  filter(event == "Goal" & is.na(secondaryType) == F) %>%
+  group_by(secondaryType) %>%
+  summarise(count=n())
+
+Shot_Conversion.df <- data.frame(Type_of_Shots = Shot.df$secondaryType, Conversion_Rate = round(Goal.df$count/Shot.df$count, digits = 2))
+
+g2 <- ggplot(Shot_Conversion.df, aes(x = reorder(Type_of_Shots, -Conversion_Rate), y = Conversion_Rate))+
+  geom_col(aes(fill = as.factor(Type_of_Shots)))+
+  geom_label(aes(label = Conversion_Rate), label.size = 0.1, vjust = -0.3)+
+  scale_y_continuous(name = "Conversion Rate", limits = c(0, 0.25), breaks = c(0, 0.05, 0.10, 0.15, 0.20, 0.25))+
+  scale_x_discrete(name = "Types of Shot") +
+  ggtitle("Conversion Rate of Different Types of Shot")
+
+# Create a Side-by-Side Bar chart
+g3 <- ggarrange(g1,g2,
+                labels = c ("A", "B"),
+                ncol = 1, nrow = 2,
+                common.legend = T, legend = "right")
+
+print(g3)
+```
+
+
+```{r}
+# Add a graph of the rink
+rink <- rasterGrob(readJPEG("ice_rink.jpg"),
+                   width = unit(1.1,"npc"), height=unit(1.1, "npc"))
+unique(NHL_Shot_Analysis_Data$secondaryType)
+
+# Wrap-around
+ggplot(NHL_Shot_Analysis_Data[NHL_Shot_Analysis_Data$secondaryType == "Wrap-around",],
+       aes(x = x, y = y, group = event, color = event, size = event))+
+  annotation_custom(rink, -100, 100, -40, 40) + 
+  geom_point() +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank()) + # Remove grid 
+  scale_color_manual(values = c("Shot" = "blue3", "Goal" = "red2")) +
+  scale_size_manual(values = c("Shot" = 1.5, "Goal" = 2)) +
+  scale_x_continuous(limits = c(-100,100), breaks = c(-100, -50, 0, 50, 100))+
+  scale_y_continuous(limits = c(-40,40), breaks = c(-40,-20,0,20,40))+
+  labs(x = "Sideline", y = "Baseline",
+       title = "NHL Shot Layout",
+       subtitle = "Wrap-around shot type")
+
+# Deflected
+ggplot(NHL_Shot_Analysis_Data[NHL_Shot_Analysis_Data$secondaryType == "Deflected",],
+       aes(x = x, y = y, group = event, color = event, size = event))+
+    annotation_custom(rink, -100, 100, -40, 40) + 
+  geom_point() +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank()) + # Remove grid 
+  scale_color_manual(values = c("Shot" = "blue3", "Goal" = "red2")) +
+  scale_size_manual(values = c("Shot" = 1.5, "Goal" = 2)) +
+  scale_x_continuous(limits = c(-100,100), breaks = c(-100, -50, 0, 50, 100))+
+  scale_y_continuous(limits = c(-40,40), breaks = c(-40,-20,0,20,40))+
+  labs(x = "Sideline", y = "Baseline",
+       title = "NHL Shot Layout",
+       subtitle = "Deflected shot type")
+
+# Backhand
+# The original size of the category is too large to present in the graph. Select a sample size of 20,000
+set.seed(123)
+ggplot(sample_n(NHL_Shot_Analysis_Data[NHL_Shot_Analysis_Data$secondaryType == "Backhand",],20000),
+       aes(x = x, y = y, group = event, color = event, size = event))+
+    annotation_custom(rink, -100, 100, -40, 40) + 
+  geom_point() +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank()) + # Remove grid 
+  scale_color_manual(values = c("Shot" = "blue3", "Goal" = "red2")) +
+  scale_size_manual(values = c("Shot" = 1.5, "Goal" = 2)) +
+  scale_x_continuous(limits = c(-100,100), breaks = c(-100, -50, 0, 50, 100))+
+  scale_y_continuous(limits = c(-40,40), breaks = c(-40,-20,0,20,40))+
+  labs(x = "Sideline", y = "Baseline",
+       title = "NHL Shot Layout",
+       subtitle = "Backhand shot type")
+
+# Snap Shot
+set.seed(123)
+ggplot(sample_n(NHL_Shot_Analysis_Data[NHL_Shot_Analysis_Data$secondaryType == "Snap Shot",],20000),
+       aes(x = x, y = y, group = event, color = event, size = event))+
+    annotation_custom(rink, -100, 100, -40, 40) + 
+  geom_point() +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank()) + # Remove grid 
+  scale_color_manual(values = c("Shot" = "blue3", "Goal" = "red2")) +
+  scale_size_manual(values = c("Shot" = 1.5, "Goal" = 2)) +
+  scale_x_continuous(limits = c(-100,100), breaks = c(-100, -50, 0, 50, 100))+
+  scale_y_continuous(limits = c(-40,40), breaks = c(-40,-20,0,20,40))+
+  labs(x = "Sideline", y = "Baseline",
+       title = "NHL Shot Layout",
+       subtitle = "Snap shot type")
+
+
+# Slap shot
+set.seed(123)
+ggplot(sample_n(NHL_Shot_Analysis_Data[NHL_Shot_Analysis_Data$secondaryType == "Slap Shot",],20000),
+       aes(x = x, y = y, group = event, color = event, size = event))+
+    annotation_custom(rink, -100, 100, -40, 40) + 
+  geom_point() +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank()) + # Remove grid 
+  scale_color_manual(values = c("Shot" = "blue3", "Goal" = "red2")) +
+  scale_size_manual(values = c("Shot" = 1.5, "Goal" = 2)) +
+  scale_x_continuous(limits = c(-100,100), breaks = c(-100, -50, 0, 50, 100))+
+  scale_y_continuous(limits = c(-40,40), breaks = c(-40,-20,0,20,40))+
+  labs(x = "Sideline", y = "Baseline",
+       title = "NHL Shot Layout",
+       subtitle = "Slap shot type")
+
+#Wrist shot
+set.seed(123)
+ggplot(sample_n(NHL_Shot_Analysis_Data[NHL_Shot_Analysis_Data$secondaryType == "Wrist Shot",],20000),
+       aes(x = x, y = y, group = event, color = event, size = event))+
+    annotation_custom(rink, -100, 100, -40, 40) + 
+  geom_point() +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank()) + # Remove grid 
+  scale_color_manual(values = c("Shot" = "blue3", "Goal" = "red2")) +
+  scale_size_manual(values = c("Shot" = 1.5, "Goal" = 2)) +
+  scale_x_continuous(limits = c(-100,100), breaks = c(-100, -50, 0, 50, 100))+
+  scale_y_continuous(limits = c(-40,40), breaks = c(-40,-20,0,20,40))+
+  labs(x = "Sideline", y = "Baseline",
+       title = "NHL Shot Layout",
+       subtitle = "Wrist shot type")
+
+# Tip-in
+ggplot(NHL_Shot_Analysis_Data[NHL_Shot_Analysis_Data$secondaryType == "Tip-In",],
+       aes(x = x, y = y, group = event, color = event, size = event))+
+    annotation_custom(rink, -100, 100, -40, 40) + 
+  geom_point() +
+  theme_bw() +
+  theme(panel.grid.major = element_blank(), # Remove grid
+        panel.grid.minor = element_blank(), # Remove grid
+        panel.border = element_blank(), # Remove grid
+        panel.background = element_blank()) + # Remove grid 
+  scale_color_manual(values = c("Shot" = "blue3", "Goal" = "red2")) +
+  scale_size_manual(values = c("Shot" = 1.5, "Goal" = 2)) +
+  scale_x_continuous(limits = c(-100,100), breaks = c(-100, -50, 0, 50, 100))+
+  scale_y_continuous(limits = c(-40,40), breaks = c(-40,-20,0,20,40))+
+  labs(x = "Sideline", y = "Baseline",
+       title = "NHL Shot Layout",
+       subtitle = "Tip-In shot type")
+```
+
+Goal Heatmap Analysis
+```{r}
+OnlyGoal <- NHL_Shot_Analysis_Data[NHL_Shot_Analysis_Data$event == "Goal",]
+
+# Wrap-around
+ggplot(OnlyGoal[OnlyGoal$secondaryType == "Wrap-around",],
+       aes(x = x, y = y))+
+    annotation_custom(rink, -100, 100, -40, 40) + 
+    geom_bin2d( bins = 30)+
+    theme_bw() +
+    theme(panel.grid.major = element_blank(), # Remove grid
+      panel.grid.minor = element_blank(), # Remove grid
+      panel.border = element_blank(), # Remove grid
+      panel.background = element_blank()) + # Remove grid 
+    scale_x_continuous(limits = c(-100,100), breaks = c(-100, -50, 0, 50, 100))+
+    scale_y_continuous(limits = c(-40,40), breaks = c(-40,-20,0,20,40))+
+      labs(x = "Sideline", y = "Baseline",
+      title = "NHL Goal Density Heatmap",
+      subtitle = "Wrap-around shot type")
+
+# Deflected
+ggplot(OnlyGoal[OnlyGoal$secondaryType == "Deflected",],
+       aes(x = x, y = y))+
+    annotation_custom(rink, -100, 100, -40, 40) + 
+    geom_bin2d()+
+    theme_bw() +
+    theme(panel.grid.major = element_blank(), # Remove grid
+      panel.grid.minor = element_blank(), # Remove grid
+      panel.border = element_blank(), # Remove grid
+      panel.background = element_blank()) + # Remove grid 
+    scale_x_continuous(limits = c(-100,100), breaks = c(-100, -50, 0, 50, 100))+
+    scale_y_continuous(limits = c(-40,40), breaks = c(-40,-20,0,20,40))+
+      labs(x = "Sideline", y = "Baseline",
+      title = "NHL Goal Density Heatmap",
+      subtitle = "Deflected shot type")
+
+# Backhand
+ggplot(OnlyGoal[OnlyGoal$secondaryType == "Backhand",],
+       aes(x = x, y = y))+
+    annotation_custom(rink, -100, 100, -40, 40) + 
+    geom_bin2d()+
+    theme_bw() +
+    theme(panel.grid.major = element_blank(), # Remove grid
+      panel.grid.minor = element_blank(), # Remove grid
+      panel.border = element_blank(), # Remove grid
+      panel.background = element_blank()) + # Remove grid 
+    scale_x_continuous(limits = c(-100,100), breaks = c(-100, -50, 0, 50, 100))+
+    scale_y_continuous(limits = c(-40,40), breaks = c(-40,-20,0,20,40))+
+      labs(x = "Sideline", y = "Baseline",
+      title = "NHL Goal Density Heatmap",
+      subtitle = "Backhand shot type")
+
+# Snap Shot
+ggplot(OnlyGoal[OnlyGoal$secondaryType == "Snap Shot",],
+       aes(x = x, y = y))+
+    annotation_custom(rink, -100, 100, -40, 40) + 
+    geom_bin2d()+
+    theme_bw() +
+    theme(panel.grid.major = element_blank(), # Remove grid
+      panel.grid.minor = element_blank(), # Remove grid
+      panel.border = element_blank(), # Remove grid
+      panel.background = element_blank()) + # Remove grid 
+    scale_x_continuous(limits = c(-100,100), breaks = c(-100, -50, 0, 50, 100))+
+    scale_y_continuous(limits = c(-40,40), breaks = c(-40,-20,0,20,40))+
+      labs(x = "Sideline", y = "Baseline",
+      title = "NHL Goal Density Heatmap",
+      subtitle = "Snap Shot shot type")
+
+# Slap Shot
+ggplot(OnlyGoal[OnlyGoal$secondaryType == "Slap Shot",],
+       aes(x = x, y = y))+
+    annotation_custom(rink, -100, 100, -40, 40) + 
+    geom_bin2d()+
+    theme_bw() +
+    theme(panel.grid.major = element_blank(), # Remove grid
+      panel.grid.minor = element_blank(), # Remove grid
+      panel.border = element_blank(), # Remove grid
+      panel.background = element_blank()) + # Remove grid 
+    scale_x_continuous(limits = c(-100,100), breaks = c(-100, -50, 0, 50, 100))+
+    scale_y_continuous(limits = c(-40,40), breaks = c(-40,-20,0,20,40))+
+      labs(x = "Sideline", y = "Baseline",
+      title = "NHL Goal Density Heatmap",
+      subtitle = "Slap Shot shot type")
+
+#Wrist Shot
+set.seed(123)
+ggplot(sample_n(OnlyGoal[OnlyGoal$secondaryType == "Wrist Shot",],10000),
+       aes(x = x, y = y))+
+    annotation_custom(rink, -100, 100, -40, 40) + 
+    geom_bin2d()+
+    theme_bw() +
+    theme(panel.grid.major = element_blank(), # Remove grid
+      panel.grid.minor = element_blank(), # Remove grid
+      panel.border = element_blank(), # Remove grid
+      panel.background = element_blank()) + # Remove grid 
+    scale_x_continuous(limits = c(-100,100), breaks = c(-100, -50, 0, 50, 100))+
+    scale_y_continuous(limits = c(-40,40), breaks = c(-40,-20,0,20,40))+
+      labs(x = "Sideline", y = "Baseline",
+      title = "NHL Goal Density Heatmap",
+      subtitle = "Wrist Shot shot type")
+
+# Tip-in
+ggplot(OnlyGoal[OnlyGoal$secondaryType == "Tip-In",],
+       aes(x = x, y = y))+
+    annotation_custom(rink, -100, 100, -40, 40) + 
+    geom_bin2d()+
+    theme_bw() +
+    theme(panel.grid.major = element_blank(), # Remove grid
+      panel.grid.minor = element_blank(), # Remove grid
+      panel.border = element_blank(), # Remove grid
+      panel.background = element_blank()) + # Remove grid 
+    scale_x_continuous(limits = c(-100,100), breaks = c(-100, -50, 0, 50, 100))+
+    scale_y_continuous(limits = c(-40,40), breaks = c(-40,-20,0,20,40))+
+      labs(x = "Sideline", y = "Baseline",
+      title = "NHL Goal Density Heatmap",
+      subtitle = "Tip-In shot type")
+```

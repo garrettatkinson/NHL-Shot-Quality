@@ -1,0 +1,276 @@
+---
+title: "Shot Quality Analysis"
+author: "Garrett Atkinson, Daniel Huang, Ian Pezzella"
+date: "2024-04-10"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Library
+```{r}
+library(tidyverse)
+```
+
+
+## R Markdown
+
+This is an R Markdown document. Markdown is a simple formatting syntax for authoring HTML, PDF, and MS Word documents. For more details on using R Markdown see <http://rmarkdown.rstudio.com>.
+
+When you click the **Knit** button a document will be generated that includes both content as well as the output of any embedded R code chunks within the document. You can embed an R code chunk like this:
+
+```{r cars}
+summary(cars)
+```
+
+## Including Plots
+
+You can also embed plots, for example:
+
+```{r pressure, echo=FALSE}
+plot(pressure)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
+
+
+Bring in data
+```{r}
+NHL_Shot_Analysis_Data <- read.csv("D:/Human Performance Analytics/Data/NHL_Shot_Analysis_Data.csv")
+```
+
+
+COunt rows
+```{r}
+nrow(NHL_Shot_Analysis_Data)
+```
+
+### Better Analysis ###
+
+# Filter out all events that are not shots or goals
+```{r}
+# Remove NAs
+NHL_Shot_Analysis_Data <- NHL_Shot_Analysis_Data %>%
+  filter(!is.na(secondaryType))
+```
+
+
+Define Coordinates for Goal
+```{r}
+goal_x_coord <- 89
+goal_y_coord <- 0
+```
+
+
+Only Take Shots in Offensive Zone
+```{r}
+# Filter out shots that are not in the offensive zone
+NHL_Shot_Analysis_Data <- NHL_Shot_Analysis_Data %>%
+  filter(x > 25)
+```
+
+Numerically Classify SecondaryType
+```{r}
+# Create a new column to numerically classify the secondary type of a shot
+NHL_Shot_Analysis_Data$shot_type <- ifelse(NHL_Shot_Analysis_Data$secondaryType == "Slap Shot", 1, 
+                                           ifelse(NHL_Shot_Analysis_Data$secondaryType == "Wrist Shot", 2, 
+                                                  ifelse(NHL_Shot_Analysis_Data$secondaryType == "Snap Shot", 3, 4)))
+
+# Change SecondaryType to Factor
+NHL_Shot_Analysis_Data$shot_type <- as.factor(NHL_Shot_Analysis_Data$shot_type)
+```
+
+
+Compute Shot Angle and Shot Distance
+```{r}
+# Create a new column to compute the shot angle
+NHL_Shot_Analysis_Data$shot_angle <- atan((NHL_Shot_Analysis_Data$y - goal_y_coord) / (NHL_Shot_Analysis_Data$x - goal_x_coord)) * 180 / pi
+
+# Create a new column to compute the shot distance
+NHL_Shot_Analysis_Data$shot_distance <- sqrt((NHL_Shot_Analysis_Data$x - goal_x_coord)^2 + (NHL_Shot_Analysis_Data$y - goal_y_coord)^2)
+```
+
+
+Numerically Classify Whether A Shot Was A Goal
+```{r}
+# Create a new column to numerically classify whether a shot was a goal 
+NHL_Shot_Analysis_Data$goal <- ifelse(NHL_Shot_Analysis_Data$event == "Goal", 1, 0)
+```
+
+
+Generate Training and Testing Sets
+```{r}
+# Split the data into training and testing sets
+set.seed(123456)
+
+# Create a vector of indices
+indices <- 1:nrow(NHL_Shot_Analysis_Data)
+
+# Randomly shuffle the indices
+indices <- sample(indices)
+
+# Create a training set
+training_set <- NHL_Shot_Analysis_Data[indices[1:round(0.8 * nrow(NHL_Shot_Analysis_Data))],]
+
+# Create a testing set
+testing_set <- NHL_Shot_Analysis_Data[indices[(round(0.8 * nrow(NHL_Shot_Analysis_Data)) + 1):nrow(NHL_Shot_Analysis_Data)],]
+```
+
+Fit a Logistic Regression Model
+```{r}
+# Fit a logistic regression model
+logistic_regression_model <- glm(goal ~ shot_type + shot_angle + shot_distance, data = training_set, family = "binomial")
+
+# Display the summary of the model
+summary(logistic_regression_model)
+```
+
+Predict on the Testing Set
+```{r}
+# Predict on the testing set
+testing_set$predicted_goal <- predict(logistic_regression_model, newdata = testing_set, type = "response")
+
+# Create a confusion matrix
+confusion_matrix <- table(testing_set$goal, ifelse(testing_set$predicted_goal > 0.15, 1, 0))
+confusion_matrix
+
+# Compute the accuracy
+accuracy <- sum(diag(confusion_matrix)) / sum(confusion_matrix)
+accuracy
+```
+
+Generate Heatmap of Predicted Probabilities for Wrist Shots
+```{r}
+# Create a grid of x and y coordinates
+x_coords <- seq(25, 100, 1)
+y_coords <- seq(-42.5, 42.5, 1)
+
+# Create a grid of shot angles and shot distances
+shot_angles <- atan((rep(y_coords, each = length(x_coords)) - goal_y_coord) / (rep(x_coords, times = length(y_coords)) - goal_x_coord)) * 180 / pi
+shot_distances <- sqrt((rep(x_coords, times = length(y_coords)) - goal_x_coord)^2 + (rep(y_coords, each = length(x_coords)) - goal_y_coord)^2)
+
+# Create a data frame for wrist shots
+heatmap_data <- data.frame(x = rep(x_coords, times = length(y_coords)),
+                           y = rep(y_coords, each = length(x_coords)),
+                           shot_type = rep(2, times = length(x_coords) * length(y_coords)),
+                           shot_angle = shot_angles,
+                           shot_distance = shot_distances)
+
+
+# Predict on the data frame
+heatmap_data$predicted_goal <- predict(logistic_regression_model, newdata = heatmap_data, type = "response")
+
+# Create a heatmap
+ggplot(heatmap_data, aes(x = x, y = y, fill = predicted_goal)) +
+  geom_tile() +
+  scale_fill_gradient(low = "blue", high = "red") +
+  theme_minimal() +
+  labs(x = "Sideline", y = "Baseline",
+       title = "Predicted Goal Probability Heatmap for Wrist Shots")
+
+```
+
+Generate Heatmap of Predicted Probabilities for Slap Shots
+```{r}
+# Create a data frame for slap shots
+heatmap_data <- data.frame(x = rep(x_coords, times = length(y_coords)),
+                           y = rep(y_coords, each = length(x_coords)),
+                           shot_type = rep(1, times = length(x_coords) * length(y_coords)),
+                           shot_angle = shot_angles,
+                           shot_distance = shot_distances)
+
+# Predict on the data frame
+heatmap_data$predicted_goal <- predict(logistic_regression_model, newdata = heatmap_data, type = "response")
+
+# Create a heatmap
+ggplot(heatmap_data, aes(x = x, y = y, fill = predicted_goal)) +
+  geom_tile() +
+  scale_fill_gradient(low = "blue", high = "red") +
+  theme_minimal() +
+  labs(x = "Sideline", y = "Baseline",
+       title = "Predicted Goal Probability Heatmap for Slap Shots")
+```
+
+Generate Heatmap of Predicted Probabilities for Snap Shots
+```{r}
+# Create a data frame for snap shots
+heatmap_data <- data.frame(x = rep(x_coords, times = length(y_coords)),
+                           y = rep(y_coords, each = length(x_coords)),
+                           shot_type = rep(3, times = length(x_coords) * length(y_coords)),
+                           shot_angle = shot_angles,
+                           shot_distance = shot_distances)
+
+# Predict on the data frame
+heatmap_data$predicted_goal <- predict(logistic_regression_model, newdata = heatmap_data, type = "response")
+
+# Create a heatmap
+ggplot(heatmap_data, aes(x = x, y = y, fill = predicted_goal)) +
+  geom_tile() +
+  scale_fill_gradient(low = "blue", high = "red") +
+  theme_minimal() +
+  labs(x = "Sideline", y = "Baseline",
+       title = "Predicted Goal Probability Heatmap for Snap Shots")
+```
+
+Generate Heatmap of Predicted Probabilities for Other Shots
+```{r}
+# Create a data frame for other shots
+heatmap_data <- data.frame(x = rep(x_coords, times = length(y_coords)),
+                           y = rep(y_coords, each = length(x_coords)),
+                           shot_type = rep(4, times = length(x_coords) * length(y_coords)),
+                           shot_angle = shot_angles,
+                           shot_distance = shot_distances)
+
+# Predict on the data frame
+heatmap_data$predicted_goal <- predict(logistic_regression_model, newdata = heatmap_data, type = "response")
+
+# Create a heatmap
+ggplot(heatmap_data, aes(x = x, y = y, fill = predicted_goal)) +
+  geom_tile() +
+  scale_fill_gradient(low = "blue", high = "red") +
+  theme_minimal() +
+  labs(x = "Sideline", y = "Baseline",
+       title = "Predicted Goal Probability Heatmap for Other Shots")
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
